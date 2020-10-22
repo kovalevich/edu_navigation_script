@@ -16,6 +16,7 @@ module Scripting
 
   # Класс реализует загрузку страниц get и post запросами
   # с возможностью кэширования
+  # TODO: ВНИМАНИЕ!!! нужно допилить редирект. т.е. если в ответе пришло 301, попытаться загрузить страницу редиректа
   class Loader
     # класс для отправки get и post запросов
     # для удобства на время разработки реализуем простое кэширование страниц, что бы при отладке не делать
@@ -113,10 +114,7 @@ module Scripting
 
   end
 
-
-  # Класс реализует заглушку BaseNavigation из системы создания правил
-  # Реализуем все необходимые методы
-  class BaseNavigation
+  class Template
     # метод принимает url страницы для скачки.
     def initialize(url)
       @todo = { url: url }
@@ -128,13 +126,76 @@ module Scripting
     # я пока не знаю, что он передает целиком, но точно передает загруженную страницу, так и поступим
     def context
       response = @loader.request @todo[:url]
-      { doc: Nokogiri::HTML(response['body']) }
+      { doc: Nokogiri::HTML(response['body']), body: response['body'] }
+    end
+  end
+
+  class ParserContext
+    attr_accessor :doc, :page_content, :products, :base_product
+
+    def initialize(doc, page_content)
+      @doc = doc
+      @page_content = page_content
+      @base_product = {}
+      @products = []
     end
 
+    def add_product(product)
+      @products << product
+    end
+
+    def print_products
+      p "Parsed #{@products.count} products"
+      @products.each do |prd|
+        p '-' * 100
+        prd.each { |k, v| p '|%20s|%77s|' % [k, v.is_a?(Array) ? v.map! { |i| i[-8..-1] }.join(', ') : v] }
+        p '_' * 100
+        p ''
+      end
+    end
+  end
+
+  class CustomParser < Template
+
+    NAME = 'name'
+    PRICE = 'price'
+    REGULAR_PRICE = 'regular_price'
+    KEY = 'key'
+    STOCK = 'stock'
+    BREADCRUMB = 'breadcrumb'
+    BRAND = 'brand'
+    SKU = 'sku'
+    IMAGE = 'image'
+    ATTRS = 'attrs'
+
+    # метод достает данные из nokogiri по правилам экстрактора для простых данных,
+    # которые не требуют преобразований
+    def prop(doc, xpath, reg_exp = /^.*$/)
+      nodes = doc.xpath xpath
+      result = nodes.text.scan reg_exp
+      result[0]
+    end
+
+    # метод достает хлебные крошки и применяет паттерн
+    def breadcrumbs(doc, xpath, reg_exp = /^(.*)$/)
+      nodes = doc.xpath xpath + '//a'
+      breadcrumbs = []
+      nodes.each { |a| breadcrumbs << a.text.gsub!(/[\t\n]*/, '') }
+      breadcrumbs = breadcrumbs.join ' *** '
+      breadcrumbs.scan(reg_exp) ? breadcrumbs.scan(reg_exp)[0].first : nil
+    end
+
+  end
+
+
+  # Класс реализует заглушку BaseNavigation из системы создания правил
+  # Реализуем все необходимые методы
+  class BaseNavigation < Template
     # заглушка на add_todo метод, просто выводит на экран сформированные параметры для тудушки
     # этот метод и вывоит то, что мы хотим получить на выходе
     def add_todo(data)
       p data
     end
   end
+
 end
