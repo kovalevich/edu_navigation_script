@@ -15,22 +15,22 @@ class Navigator1 < Scripting::BaseNavigation
     categories.each { |cat| add_todo url: 'https://garfield.by/' + cat }
   end
 end
+
 class Navigator < Scripting::BaseNavigation
+
+  PRODUCTS_ON_PAGE = 96
+  CUSTOM_PRODUCTS_ON_PAGE = 1000
   def run(context)
     url = @todo[:url]
     doc = context[:doc]
 
-    # достаем номер последней страницы из меню пагинации
-    # беру предпоследний li (в последнем стрелка)
-    last_page = doc.xpath("//div[@class='bx_pagination_page']//li")[-2]
+    products_count = doc.xpath("//span[@class='search-res-number']").text.to_f
+    return unless products_count > PRODUCTS_ON_PAGE && url !~ /Nrpp/
 
-    # если на странице нет пагинации (last_page = nil), или мы на странице у которой уже есть параметр page
-    # выходим не добавляя тудушек
-    return unless last_page && url !~ /PAGEN/
-
-    # добавляем в туду страницы (2..last_page)
-    (2..last_page.text.to_i).each do |time|
-      add_todo(url: "#{url}?PAGEN_1=#{time}&SIZEN_1=20")
+    # делаем вторую страницу продуктов от 96 до products_count
+    count_pages = ((products_count - PRODUCTS_ON_PAGE) / CUSTOM_PRODUCTS_ON_PAGE).ceil
+    (0...count_pages).each do |p|
+      add_todo(url: "#{url}&No=#{PRODUCTS_ON_PAGE + (CUSTOM_PRODUCTS_ON_PAGE * p)}&Nrpp=#{CUSTOM_PRODUCTS_ON_PAGE}")
     end
   end
 end
@@ -39,5 +39,5 @@ end
 # создадим экземпляр Navigator, передав в конструктор url искомой страницы
 # затем вызовем метод run, передавая в него контекст из этого же экземпляра
 # контекст можно было и не передавать, это сделано лишь для того, что бы не нарушить внейшний вид нужного нам кода
-n = Navigator.new 'https://garfield.by/catalog/dogs/vitaminy-i-dobavki.html'
+n = Navigator.new('https://www.ulta.com/hair-shampoo-conditioner?N=27ih', 'vmdqproxygw.profitero.local:64128', '38_94_183_46_65432:pass')
 n.run n.context

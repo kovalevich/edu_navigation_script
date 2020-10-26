@@ -3,34 +3,13 @@
 require './scripting.rb'
 require 'json'
 
-module Scripting
-  # изменим контекст для шопа garfild. ВНИМАНИЕ!!! тут пишем код, который касается только гарфилда
-  # если пишете методы абстрактные, выносите их в файл scripting.rb
-  # Тут иммитируем работу вашего настроенного экстрактора, вытаскиваем все поля, которые вытаскивает экстрактор
-  # записываем в хэш context.base_product
-  class CustomParser
-    def context
-      super_ctx = super
-      ctx = Scripting::ParserContext.new(super_ctx[:doc], super_ctx[:body])
-      doc = ctx.doc
-
-      # эту чать кода приводим в соответствии с вашим экстратором
-      # пока доступны метод prop для простых полей, не требующих дополнительных преобразований и метод breadcrumb
-      # вы можете создать (и это будет хорошо) методы для обработки instore, price и т.д
-      # это делается в абстрактном классе CustomParser в файле scripting
-      base_product = {
-          BREADCRUMB => breadcrumbs(doc, "//div[@class='bx-breadcrumb']", /^.*?\*{3}(.*)\*{3}.*$/),
-          NAME => prop(doc, "//h1[contains(@class, 'card__title')]"),
-          PRICE => prop(doc, "//div[@class='product-card__price-main']/@data-num-price"),
-          REGULAR_PRICE => prop(doc, "//p[contains(@class, '__price-old')]"),
-          SKU => prop(doc, "//span[@class='item_art_number']"),
-          BRAND => prop(doc, "//div[contains(@class, '__producer-img')]//img/@alt"),
-          KEY => nil,
-          STOCK => nil
-      }
-      ctx.base_product = base_product
-      ctx
-    end
+# ВНИМАНИЕ!!! если неоторые данные в шопе получаете через экстактор, необходимо их предварительно извлечь
+# для корректного дебагинга. Это можно сделать дописав класс Scripting::ParserContext прямо в этом файле
+# переопределив метод extractor_emulate например:
+class Scripting::ParserContext
+  def extractor_emulate
+    # метод будет доставить какие-то данные и заполнять @base_product
+    # как это  и делает экстратор
   end
 end
 
@@ -51,10 +30,13 @@ class EducationGarfild < Scripting::CustomParser
   end
 end
 
-# Непосредственно тестируем наш класс
-# создадим экземпляр EducationGarfild, передав в конструктор url искомой страницы
-# затем вызовем метод parse, передавая в него контекст из этого же экземпляра
-# контекст можно было и не передавать, это сделано лишь для того, что бы не нарушить внейшний вид нужного нам кода
-n = EducationGarfild.new 'https://garfield.by/catalog/cats/napolniteli/komkuyushchiysya/cats-best-koplus10.html' # multiproduct
-#n = EducationGarfild.new 'https://garfield.by/catalog/dogs/igrushki/dlya-dressury-i-igr-s-khozyainom/igrushka-dlya-trenirovki-sobak-puller-micro.html' # singleproduct
-n.parse n.context
+url = 'https://www.ulta.com/hydrate-conditioner?productId=xlsImpprod3410045'
+proxy = 'vmdqproxygw.profitero.local:64128'
+proxy_pwd = '38_94_183_46_65432:pass'
+
+# созадем контекст
+ctx = Scripting::ParserContext.new(url, proxy, proxy_pwd)
+# создаем экземпляр тестируемого класса
+n = EducationUlta.new(url)
+# запускаем метод, который мы дебажим
+n.parse(ctx)

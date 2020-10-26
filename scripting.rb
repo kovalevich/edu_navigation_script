@@ -24,11 +24,13 @@ module Scripting
     attr_reader :requests_count, :from_cache_count
 
     # если нужно передавть какие-то особые заголовки, передаем их при создании загрузчика
-    def initialize(headers = {})
+    def initialize(headers = {}, proxy = false, proxy_pwd = nil)
       @headers = headers
       @requests_count = 0
       @from_cache_count = 0
       @logger = Logger.new(LOG_FILE, 'monthly')
+      @proxy = proxy
+      @proxy_pwd = proxy_pwd
 
       # достаем user-agent из файла 'user-agent'
       @user_agents = []
@@ -88,6 +90,9 @@ module Scripting
       # метод реализует get запрос по урлу и возвращает хэш {статус, тело ответа}
       @logger.info('Send get request to: "' + url.scan(%r{.+/([^/]+)/?})[0][0] + '"')
       http = Curl::Easy.perform(url) do |curl|
+        curl.proxy_tunnel = @proxy ? true : false
+        curl.proxy_url = @proxy
+        curl.proxypwd = @proxy_pwd
         curl.on_success { on_success(url) }
       end
       { 'status' => http.status.to_i, 'body' => http.body }
@@ -114,30 +119,37 @@ module Scripting
 
   end
 
-  class Template
-    # метод принимает url страницы для скачки.
-    def initialize(url)
-      @todo = { url: url }
-      @context = nil
-      @loader = Loader.new
-    end
-
-    # метод возвращает нейкий контекст,
-    # я пока не знаю, что он передает целиком, но точно передает загруженную страницу, так и поступим
-    def context
-      response = @loader.request @todo[:url]
-      { doc: Nokogiri::HTML(response['body']), body: response['body'] }
+  # абстрактный класс контекста.
+  class Context
+    attr_reader :doc, :body, :url
+    def initialize(url, proxy = false, proxy_pwd = nil)
+      @url = url
+      @loader = Loader.new(nil, proxy, proxy_pwd)
+      response = @loader.request @url
+      @doc = Nokogiri::HTML(response['body'])
+      @body = response['body']
     end
   end
 
-  class ParserContext
-    attr_accessor :doc, :page_content, :products, :base_product
-
-    def initialize(doc, page_content)
-      @doc = doc
-      @page_content = page_content
+  # контекст для Parser
+  class ParserContext < Context
+    attr_reader :base_product, :products
+    def initialize(url, proxy = false, proxy_pwd = nil)
+      super(url, proxy, proxy_pwd)
       @base_product = {}
       @products = []
+      extractor_emulate
+    end
+
+    def word(doc, xpath, regexp)
+      # Извлечь текст из документа по списку xpath и списку regexp. Будет использован первый подходящий xpath
+      result = word0(doc, xpath, regexp)
+      result || alert("Not found: #{xpath}")
+    end
+
+    def word2(doc, xpath, regexp)
+      # делает ровно то, что и word, только не кидает алерт
+      word0(doc, xpath, regexp)
     end
 
     def add_product(product)
@@ -147,11 +159,55 @@ module Scripting
     def print_products
       p "Parsed #{@products.count} products"
       @products.each do |prd|
-        p '-' * 100
-        prd.each { |k, v| p '|%20s|%77s|' % [k, v.is_a?(Array) ? v.map! { |i| i[-8..-1] }.join(', ') : v] }
-        p '_' * 100
-        p ''
+        print_product prd
       end
+    end
+
+    def extractor_emulate
+      nil
+    end
+
+    def print_product(prd)
+      p '-' * 100
+      prd.each do |k, v|
+        value = if v.is_a?(Array)
+                  v.map! { |i| i[-8..-1] }.join(', ')
+                else
+                  v.is_a?(Hash) ? v.keys.join(', ') : v
+                end
+        p '|%20s|%77s|' % [k, value]
+      end
+      p '_' * 100
+      p ''
+    end
+
+    private
+
+    def alert(text)
+      p text
+      nil
+    end
+
+    def word0(doc, xpath, regexp)
+      xpath.split('\n').each do |xp|
+        text = doc.xpath(xp).text
+        return scan_by_regexp(text, regexp) if text.size.positive?
+      end
+    end
+
+    def scan_by_regexp(text, regexp)
+      regexp.split('\n').each do |r|
+        result = text.scan(/#{r}/)
+        return result[0] if result.any?
+      end
+      nil
+    end
+  end
+
+  class Template
+    # метод принимает url страницы для скачки.
+    def initialize(url)
+      @todo = { url: url }
     end
   end
 
@@ -167,6 +223,8 @@ module Scripting
     SKU = 'sku'
     IMAGE = 'image'
     ATTRS = 'attrs'
+    PROMO_NAME = 'promo_name'
+    DELISTED = 'delisted'
 
     # метод достает данные из nokogiri по правилам экстрактора для простых данных,
     # которые не требуют преобразований
@@ -182,7 +240,7 @@ module Scripting
       breadcrumbs = []
       nodes.each { |a| breadcrumbs << a.text.gsub!(/[\t\n]*/, '') }
       breadcrumbs = breadcrumbs.join ' *** '
-      breadcrumbs.scan(reg_exp) ? breadcrumbs.scan(reg_exp)[0].first : nil
+      breadcrumbs.scan(reg_exp).any? ? breadcrumbs.scan(reg_exp)[0].first : nil
     end
 
   end
