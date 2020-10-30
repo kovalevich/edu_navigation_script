@@ -6,10 +6,13 @@ require 'json'
 # ВНИМАНИЕ!!! если неоторые данные в шопе получаете через экстактор, необходимо их предварительно извлечь
 # для корректного дебагинга. Это можно сделать дописав класс Scripting::ParserContext прямо в этом файле
 # переопределив метод extractor_emulate например:
-class Scripting::ParserContext
-  def extractor_emulate
-    # метод будет доставить какие-то данные и заполнять @base_product
-    # как это  и делает экстратор
+module Scripting
+  class ParserContext
+    def extractor_emulate
+      # метод будет доставить какие-то данные и заполнять @base_product
+      # как это  и делает экстратор
+      # @base_product[:price] = @doc.xpath .....
+    end
   end
 end
 
@@ -17,11 +20,15 @@ end
 # который есть на продакшене, его можно допилить в scripting.rb
 class EducationGarfild < Scripting::CustomParser
 
+  def initialize_variables(ctx)
+    @ctx = ctx
+    @doc = ctx.doc
+    @base = ctx.base_product
+  end
+
   def parse(ctx)
-
-    base = ctx.base_product
-    doc = ctx.doc
-
+    initialize_variables(ctx)
+    p @doc
     # тут логика обрабоки страницы
     # проверяю есть ли base_product
     # добполняем данные base_product, которые не собрал экстратор
@@ -35,8 +42,8 @@ proxy = 'vmdqproxygw.profitero.local:64128'
 proxy_pwd = '38_94_183_46_65432:pass'
 
 # созадем контекст
-ctx = Scripting::ParserContext.new(url, proxy, proxy_pwd)
+ctx = Scripting::ParserContext.new(url)
 # создаем экземпляр тестируемого класса
-n = EducationUlta.new(url)
+n = EducationGarfild.new(url)
 # запускаем метод, который мы дебажим
 n.parse(ctx)

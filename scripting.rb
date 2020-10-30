@@ -6,6 +6,7 @@ require 'active_support'
 require 'json'
 require 'digest'
 require 'logger'
+require './src/rule_tools.rb'
 
 # module Scripting
 module Scripting
@@ -91,8 +92,8 @@ module Scripting
       @logger.info('Send get request to: "' + url.scan(%r{.+/([^/]+)/?})[0][0] + '"')
       http = Curl::Easy.perform(url) do |curl|
         curl.proxy_tunnel = @proxy ? true : false
-        curl.proxy_url = @proxy
-        curl.proxypwd = @proxy_pwd
+        curl.proxy_url = @proxy if @proxy
+        curl.proxypwd = @proxy_pwd if @proxy
         curl.on_success { on_success(url) }
       end
       { 'status' => http.status.to_i, 'body' => http.body }
@@ -121,35 +122,68 @@ module Scripting
 
   # абстрактный класс контекста.
   class Context
-    attr_reader :doc, :body, :url
+    attr_reader :doc, :page_content, :url, :todo
     def initialize(url, proxy = false, proxy_pwd = nil)
+      @todo = { url: url }
       @url = url
       @loader = Loader.new(nil, proxy, proxy_pwd)
       response = @loader.request @url
       @doc = Nokogiri::HTML(response['body'])
-      @body = response['body']
+      @page_content = response['body']
+    end
+
+    def word(doc, xpath, regexp = "(.*)", name = 'name', mandatory = true)
+      result = RuleTools.extract(doc || @doc, xpath, regexp, name)
+      raise "No value found #{name} found by #{regexp} using #{xpath}" if mandatory && (!result || result.to_s.empty?)
+      result
+    end
+
+    # the same as `word` but without exception if no value found
+    def word2(doc, xpath, regexp = "(.*)")
+      word(doc, xpath, regexp, '', false)
+    end
+
+    def node_val(doc, xpath, regexp, prop_name, mandatory = true)
+      RuleTools.validate_key(prop_name)
+      result = RuleTools.extract(doc || @doc, xpath ? ".#{xpath.start_with?('/') ? '' : '//'}#{xpath}" : '.', regexp, prop_name)
+      raise "No property #{prop_name} found #{xpath} #{regexp}" if mandatory && (!result || result.to_s.empty?)
+      result
+    end
+
+    def text_val(regexp, prop_name, mandatory = true)
+      RuleTools.validate_key(prop_name)
+      result = nil
+      @page_content.scan(/#{regexp}/) { |s|
+        raise "Multiple property #{prop_name} found in text for: #{prop_name}" if result
+        result = s.first
+      }
+      raise "No property #{prop_name} found" if mandatory && (!result || result.to_s.empty?)
+      result
+    end
+
+  end
+
+  class NavigatorContext < Context
+    def initialize(url, proxy = false, proxy_pwd = nil)
+      super(url, proxy, proxy_pwd)
+      @todo = { url: url }
     end
   end
 
   # контекст для Parser
   class ParserContext < Context
     attr_reader :base_product, :products
+    attr_accessor :content_chain
     def initialize(url, proxy = false, proxy_pwd = nil)
       super(url, proxy, proxy_pwd)
       @base_product = {}
+      @content_chain = nil
       @products = []
       extractor_emulate
     end
 
-    def word(doc, xpath, regexp)
-      # Извлечь текст из документа по списку xpath и списку regexp. Будет использован первый подходящий xpath
-      result = word0(doc, xpath, regexp)
-      result || alert("Not found: #{xpath}")
-    end
-
-    def word2(doc, xpath, regexp)
-      # делает ровно то, что и word, только не кидает алерт
-      word0(doc, xpath, regexp)
+    def skip_base_product
+      true
     end
 
     def add_product(product)
@@ -181,26 +215,35 @@ module Scripting
       p ''
     end
 
+    def add_todo_seq(requests)
+      # проходим по всем страницам, ответы складываем в @content_chain
+      @content_chain = []
+      requests.each do |r|
+        @content_chain << @loader.request(r[:url])['body']
+        @todo[:user_data] = r[:user_data] if r[:user_data]
+      end
+    end
+
     private
 
     def alert(text)
       p text
       nil
     end
+  end
 
-    def word0(doc, xpath, regexp)
-      xpath.split('\n').each do |xp|
-        text = doc.xpath(xp).text
-        return scan_by_regexp(text, regexp) if text.size.positive?
-      end
+  class RRContext < Context
+    def initialize(url, proxy = false, proxy_pwd = nil)
+      super(url, proxy, proxy_pwd)
+      @todo = { url: url }
     end
 
-    def scan_by_regexp(text, regexp)
-      regexp.split('\n').each do |r|
-        result = text.scan(/#{r}/)
-        return result[0] if result.any?
-      end
-      nil
+    def add_quality(hash)
+      p "add_quality for #{hash[:url]}"
+    end
+
+    def add_rating(hash)
+      p "Add reting for #{hash[:url]}"
     end
   end
 
@@ -213,18 +256,19 @@ module Scripting
 
   class CustomParser < Template
 
-    NAME = 'name'
-    PRICE = 'price'
-    REGULAR_PRICE = 'regular_price'
-    KEY = 'key'
-    STOCK = 'stock'
-    BREADCRUMB = 'breadcrumb'
-    BRAND = 'brand'
-    SKU = 'sku'
-    IMAGE = 'image'
-    ATTRS = 'attrs'
-    PROMO_NAME = 'promo_name'
-    DELISTED = 'delisted'
+    NAME = :name
+    PRICE = :price
+    REGULAR_PRICE = :regular_price
+    KEY = :key
+    STOCK = :stock
+    BREADCRUMB = :breadcrumb
+    BRAND = :brand
+    SKU = :sku
+    IMAGE = :image
+    PROMO_NAME = :promo_name
+    DELISTED = :delisted
+    UPC = :UPC
+    UOM = :UOM
 
     # метод достает данные из nokogiri по правилам экстрактора для простых данных,
     # которые не требуют преобразований
@@ -243,6 +287,31 @@ module Scripting
       breadcrumbs.scan(reg_exp).any? ? breadcrumbs.scan(reg_exp)[0].first : nil
     end
 
+  end
+
+  class RR < Template
+    NO_DATA = '-'
+    RATING_SCALE = :rating_scale
+    RATING = :rating
+    REVIEWS_COUNT = :reviews_count
+    RATINGS_COUNT = :ratings_count
+    RATING0 = :rating0
+    RATING1 = :rating1
+    RATING2 = :rating2
+    RATING3 = :rating3
+    RATING4 = :rating4
+    RATING5 = :rating5
+    RATING6 = :rating6
+    RATING7 = :rating7
+    REVIEW_URL = :review_url
+    REVIEW_ID = :review_id
+    NO_REVIEW = :no_review
+    CREATED_AT = :created_at
+    TITLE = :title
+    CONTENT = :content
+    AUTHOR = :author
+    HAS_IMAGE = :has_image
+    IMAGES_COUNT = :images_count
   end
 
 

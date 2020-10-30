@@ -19,25 +19,26 @@ end
 class Navigator < Scripting::BaseNavigation
 
   PRODUCTS_ON_PAGE = 96
-  CUSTOM_PRODUCTS_ON_PAGE = 1000
   def run(context)
     url = @todo[:url]
-    doc = context[:doc]
+    doc = context.doc
+    sel = doc.xpath("//select[@aria-label='Page']/option/@value")
+    return unless sel.size > 1 && url !~ /Nrpp/
 
-    products_count = doc.xpath("//span[@class='search-res-number']").text.to_f
-    return unless products_count > PRODUCTS_ON_PAGE && url !~ /Nrpp/
-
-    # делаем вторую страницу продуктов от 96 до products_count
-    count_pages = ((products_count - PRODUCTS_ON_PAGE) / CUSTOM_PRODUCTS_ON_PAGE).ceil
-    (0...count_pages).each do |p|
-      add_todo(url: "#{url}&No=#{PRODUCTS_ON_PAGE + (CUSTOM_PRODUCTS_ON_PAGE * p)}&Nrpp=#{CUSTOM_PRODUCTS_ON_PAGE}")
+    sel[1..-1].each do |u|
+      add_todo(url: "https://ulta.com" + u)
     end
   end
 end
 
-# Непосредственно тестируем наш класс
-# создадим экземпляр Navigator, передав в конструктор url искомой страницы
-# затем вызовем метод run, передавая в него контекст из этого же экземпляра
-# контекст можно было и не передавать, это сделано лишь для того, что бы не нарушить внейшний вид нужного нам кода
-n = Navigator.new('https://www.ulta.com/hair-shampoo-conditioner?N=27ih', 'vmdqproxygw.profitero.local:64128', '38_94_183_46_65432:pass')
-n.run n.context
+url = 'https://www.ulta.com/hair-shampoo-conditioner?N=27ih'
+proxy = 'vmdqproxygw.profitero.local:64128'
+proxy_pwd = '38_94_183_46_65432:pass'
+
+# созадем контекст
+ctx = Scripting::NavigatorContext.new(url, proxy, proxy_pwd)
+# создаем экземпляр тестируемого класса
+n = Navigator.new(url)
+# запускаем метод, который мы дебажим
+n.run(ctx)
+
